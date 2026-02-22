@@ -16,8 +16,6 @@
             } \
         } \
     } while(0)
-#define MAX_DMA_I2C_INSTANCES 3
-static I2C_Device* s_pI2C_DMA_Registry[MAX_DMA_I2C_INSTANCES] = {NULL};
 
 							//函数声明
 //SoftI2C
@@ -36,19 +34,16 @@ static uint8_t HardI2C_ReadRegs(I2C_Device* self,uint8_t SlaveAddr,uint8_t RegAd
 static void HardI2C_DMA_Init(I2C_Device* self);
 static uint8_t HardI2C_DMA_ReadRegs(I2C_Device* self,uint8_t SlaveAddr,uint8_t RegAddr,
 	uint8_t ReceiveData[],uint16_t Size);
-
 typedef struct
 {
-	uint32_t RCC_AHB1Periph_DMAx;  //DMA时钟(如 RCC_AHB1Periph_DMA1)
-	DMA_Stream_TypeDef* Rx_Stream; // 接收数据流 (如F407的DMA1_Stream0)
-    uint32_t Rx_Channel;           // 接收通道(如DMA_Channel_1)
-    DMA_Stream_TypeDef* Tx_Stream; // 发送数据流(DMA1_Stream6)
-    uint32_t Tx_Channel;           // 发送通道
-	uint8_t Rx_IRQn;			   //中断号
-	SemaphoreHandle_t DMA_RxSemaphoreHandle_t; //接收完成通知
-}DMA_config;
-typedef struct
-{
+	//GPIO
+	uint32_t RCC_GPIO;          	//GPIO 时钟 如 RCC_APB2Periph_GPIOA
+    GPIO_TypeDef* GPIO_Port;      	//GPIO 端口(如 GPIOA)
+    uint16_t Pin_SCL;            	//SCL引脚
+    uint16_t Pin_SDA;            	//SDA引脚
+	//软件I2C
+	uint32_t Soft_Delay_Count; 		//软件模拟 延时
+	//硬件I2C
 	I2C_TypeDef* I2Cxx;				//I2C1,I2C2,I2C3
 	uint32_t RCC_APB1Periph_I2Cx;	//RCC_APB1Periph_I2C1,I2C2,I2C3
 	uint32_t ClockSpeed;			//I2C速度
@@ -60,20 +55,17 @@ typedef struct
 	uint8_t  GPIO_AF_I2C;			//I2C引脚复用
 	uint16_t GPIO_PinSourcex_SCL;	//SCK复用引脚 如GPIO_PinSource6
 	uint16_t GPIO_PinSourcex_SDA;	//SDA复用引脚 如GPIO_PinSource7
-	DMA_config* HardI2C_DMA_config; //硬件I2C的DMA
-}HardwareI2C_config;
-typedef struct
-{
-	//GPIO
-	uint32_t RCC_GPIO;          	//GPIO 时钟 如 RCC_APB2Periph_GPIOA
-    GPIO_TypeDef* GPIO_Port;      	//GPIO 端口(如 GPIOA)
-    uint16_t Pin_SCL;            	//SCL引脚
-    uint16_t Pin_SDA;            	//SDA引脚
-	uint32_t Soft_Delay_Count; 		//软件模拟 延时
-	HardwareI2C_config* Hardware_I2C;
-	void* Extersion;
+	//DMA
+	uint32_t RCC_AHB1Periph_DMAx;  //DMA时钟(如 RCC_AHB1Periph_DMA1)
+	DMA_Stream_TypeDef* Rx_Stream; // 接收数据流 (如F407的DMA1_Stream0)
+    uint32_t Rx_Channel;           // 接收通道(如DMA_Channel_1)
+    DMA_Stream_TypeDef* Tx_Stream; // 发送数据流(DMA1_Stream6)
+    uint32_t Tx_Channel;           // 发送通道
+	uint8_t Rx_IRQn;			   //中断号
+	SemaphoreHandle_t DMA_RxSemaphoreHandle_t; //接收完成通知
 }I2C_config;
 
+								//======Device_management====
 //stm32F4_SoftI2C1
 static I2C_config stm32F4_SoftI2C_cfg1={
 	.RCC_GPIO=RCC_AHB1Periph_GPIOE,
@@ -81,16 +73,12 @@ static I2C_config stm32F4_SoftI2C_cfg1={
 	.Pin_SCL=GPIO_Pin_2,
 	.Pin_SDA=GPIO_Pin_3,
 	.Soft_Delay_Count=500,
-	.Hardware_I2C=NULL,
 };
-static const VirtualTable stm32F4_SoftI2C_vTable1={
+I2C_Device stm32F4_SoftI2C1={
 	.Init=Soft_I2C_Init,
 	.WriteReg=SoftI2C_WriteReg,
 	.ReadReg=SoftI2C_ReadReg,
 	.ReadRegs=SoftI2C_ReadRegs,
-};
-static I2C_Device stm32F4_SoftI2C1={
-	.vTable=&stm32F4_SoftI2C_vTable1,
 	.Name="stm32F4_SoftI2C1",
 	.config=&stm32F4_SoftI2C_cfg1,
 };
@@ -101,21 +89,24 @@ static I2C_config stm32F4_SoftI2C_cfg2={
 	.Pin_SCL=GPIO_Pin_4,
 	.Pin_SDA=GPIO_Pin_5,
 	.Soft_Delay_Count=100,
-	.Hardware_I2C=NULL,
 };
-static const VirtualTable stm32F4_SoftI2C_vTable2={
+I2C_Device OLED_I2C_Obj={
 	.Init=Soft_I2C_Init,
 	.WriteReg=SoftI2C_WriteReg,
 	.ReadReg=SoftI2C_ReadReg,
 	.ReadRegs=SoftI2C_ReadRegs,
-};
-static I2C_Device stm32F4_SoftI2C2={
-	.vTable=&stm32F4_SoftI2C_vTable2,
 	.Name="stm32F4_SoftI2C2",
 	.config=&stm32F4_SoftI2C_cfg2,
 };
+I2C_Device* OLED_I2C=&OLED_I2C_Obj;
 //stm32F4_HardI2C1
-static HardwareI2C_config HardwareI2C={
+static I2C_config stm32F4_HardI2C_cfg={
+	//GPIO
+	.RCC_GPIO=RCC_AHB1Periph_GPIOB,
+	.GPIO_Port=GPIOB,
+	.Pin_SCL=GPIO_Pin_6,
+	.Pin_SDA=GPIO_Pin_7,
+	//I2C
 	.I2Cxx=I2C1,
 	.RCC_APB1Periph_I2Cx=RCC_APB1Periph_I2C1,
 	.ClockSpeed=100000,
@@ -128,26 +119,35 @@ static HardwareI2C_config HardwareI2C={
 	.GPIO_PinSourcex_SCL=GPIO_PinSource6,
 	.GPIO_PinSourcex_SDA=GPIO_PinSource7,
 };
-static I2C_config stm32F4_HardI2C_cfg={
-	.RCC_GPIO=RCC_AHB1Periph_GPIOB,
-	.GPIO_Port=GPIOB,
-	.Pin_SCL=GPIO_Pin_6,
-	.Pin_SDA=GPIO_Pin_7,
-	.Hardware_I2C=&HardwareI2C,
-};
-static const VirtualTable stm32F4_HardI2C_vTable1={
+I2C_Device stm32F4_HardI2C1={
 	.Init=Hard_I2C_Init,
 	.WriteReg=HardI2C_WriteReg,
 	.ReadReg=HardI2C_ReadReg,
 	.ReadRegs=HardI2C_ReadRegs,
-};
-static I2C_Device stm32F4_HardI2C1={
-	.vTable=&stm32F4_HardI2C_vTable1,
 	.Name="stm32F4_HardI2C1",
 	.config=&stm32F4_HardI2C_cfg,
 };
+
 //stm32F4_HardI2C1_DMA
-static DMA_config stm32F4_HardI2C1_DMA_config={
+static I2C_config stm32F4_HardI2C1_DMA_cfg={
+	//GPIO
+	.RCC_GPIO=RCC_AHB1Periph_GPIOB,
+	.GPIO_Port=GPIOB,
+	.Pin_SCL=GPIO_Pin_6,
+	.Pin_SDA=GPIO_Pin_7,
+	//I2C
+	.I2Cxx=I2C1,
+	.RCC_APB1Periph_I2Cx=RCC_APB1Periph_I2C1,
+	.ClockSpeed=100000,
+	.Mode=I2C_Mode_I2C,
+	.DutyCycle=I2C_DutyCycle_2,
+	.OwnAddress1=0x00,
+	.Ack=I2C_Ack_Enable,
+	.AcknowledgedAddress=I2C_AcknowledgedAddress_7bit,
+	.GPIO_AF_I2C=GPIO_AF_I2C1,
+	.GPIO_PinSourcex_SCL=GPIO_PinSource6,
+	.GPIO_PinSourcex_SDA=GPIO_PinSource7,
+	//DMA
 	.RCC_AHB1Periph_DMAx=RCC_AHB1Periph_DMA1,
 	.Rx_Stream=DMA1_Stream0,
 	.Rx_Channel=DMA_Channel_1,
@@ -156,38 +156,15 @@ static DMA_config stm32F4_HardI2C1_DMA_config={
 	.Rx_IRQn=DMA1_Stream0_IRQn,
 	.DMA_RxSemaphoreHandle_t=NULL,
 };
-static HardwareI2C_config HardwareI2C1_DMA={
-	.I2Cxx=I2C1,
-	.RCC_APB1Periph_I2Cx=RCC_APB1Periph_I2C1,
-	.ClockSpeed=100000,
-	.Mode=I2C_Mode_I2C,
-	.DutyCycle=I2C_DutyCycle_2,
-	.OwnAddress1=0x00,
-	.Ack=I2C_Ack_Enable,
-	.AcknowledgedAddress=I2C_AcknowledgedAddress_7bit,
-	.GPIO_AF_I2C=GPIO_AF_I2C1,
-	.GPIO_PinSourcex_SCL=GPIO_PinSource6,
-	.GPIO_PinSourcex_SDA=GPIO_PinSource7,
-	.HardI2C_DMA_config=&stm32F4_HardI2C1_DMA_config,
-};
-static I2C_config stm32F4_HardI2C1_DMA_cfg={
-	.RCC_GPIO=RCC_AHB1Periph_GPIOB,
-	.GPIO_Port=GPIOB,
-	.Pin_SCL=GPIO_Pin_6,
-	.Pin_SDA=GPIO_Pin_7,
-	.Hardware_I2C=&HardwareI2C1_DMA,
-};
-static const VirtualTable stm32F4_HardI2C1_DMA_vTable1={
+I2C_Device MAX_I2C_Obj={
 	.Init=HardI2C_DMA_Init,
 	.WriteReg=HardI2C_WriteReg,
 	.ReadReg=HardI2C_ReadReg,
 	.ReadRegs=HardI2C_DMA_ReadRegs,
-};
-static I2C_Device stm32F4_HardI2C1_DMA={
-	.vTable=&stm32F4_HardI2C1_DMA_vTable1,
 	.Name="stm32F4_HardI2C1_DMA",
 	.config=&stm32F4_HardI2C1_DMA_cfg,
 };
+I2C_Device* MAX_I2C = &MAX_I2C_Obj;
 						//====Software-emulated I2C====
 static void I2C_Delay(I2C_Device* self)
 {
@@ -199,7 +176,6 @@ static void SoftI2C_Write_SCL(I2C_Device* self,uint8_t Bit)
 {
 	I2C_config* cfg=self->config;
 	GPIO_WriteBit(cfg->GPIO_Port,cfg->Pin_SCL, (BitAction)Bit);
-	
 }
 
 static void SoftI2C_Write_SDA(I2C_Device* self,uint8_t Bit)
@@ -370,22 +346,20 @@ static void Hard_I2C_Init(I2C_Device* self)
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
 	GPIO_Init(cfg->GPIO_Port, &GPIO_InitStructure);
 	
-	RCC_APB1PeriphClockCmd(cfg->Hardware_I2C->RCC_APB1Periph_I2Cx, ENABLE);
-	GPIO_PinAFConfig(cfg->GPIO_Port,cfg->Hardware_I2C->GPIO_PinSourcex_SCL,
-		cfg->Hardware_I2C->GPIO_AF_I2C);//SCL复用
-	GPIO_PinAFConfig(cfg->GPIO_Port,cfg->Hardware_I2C->GPIO_PinSourcex_SDA,
-		cfg->Hardware_I2C->GPIO_AF_I2C); //SDA复用
-	RCC_APB1PeriphResetCmd(cfg->Hardware_I2C->RCC_APB1Periph_I2Cx, ENABLE);
-	RCC_APB1PeriphResetCmd(cfg->Hardware_I2C->RCC_APB1Periph_I2Cx, DISABLE);
+	RCC_APB1PeriphClockCmd(cfg->RCC_APB1Periph_I2Cx, ENABLE);
+	GPIO_PinAFConfig(cfg->GPIO_Port,cfg->GPIO_PinSourcex_SCL,cfg->GPIO_AF_I2C);//SCL复用
+	GPIO_PinAFConfig(cfg->GPIO_Port,cfg->GPIO_PinSourcex_SDA,cfg->GPIO_AF_I2C); //SDA复用
+	RCC_APB1PeriphResetCmd(cfg->RCC_APB1Periph_I2Cx, ENABLE);
+	RCC_APB1PeriphResetCmd(cfg->RCC_APB1Periph_I2Cx, DISABLE);
 	I2C_InitTypeDef I2C_InitStruct;
-	I2C_InitStruct.I2C_ClockSpeed=cfg->Hardware_I2C->ClockSpeed;
-	I2C_InitStruct.I2C_Mode = cfg->Hardware_I2C->Mode;
-	I2C_InitStruct.I2C_DutyCycle =cfg->Hardware_I2C->DutyCycle;
-	I2C_InitStruct.I2C_OwnAddress1 = cfg->Hardware_I2C->OwnAddress1;
-	I2C_InitStruct.I2C_Ack = cfg->Hardware_I2C->Ack;
-	I2C_InitStruct.I2C_AcknowledgedAddress = cfg->Hardware_I2C->AcknowledgedAddress;
-	I2C_Init(cfg->Hardware_I2C->I2Cxx, &I2C_InitStruct);
-	I2C_Cmd(cfg->Hardware_I2C->I2Cxx, ENABLE);
+	I2C_InitStruct.I2C_ClockSpeed=cfg->ClockSpeed;
+	I2C_InitStruct.I2C_Mode = cfg->Mode;
+	I2C_InitStruct.I2C_DutyCycle =cfg->DutyCycle;
+	I2C_InitStruct.I2C_OwnAddress1 = cfg->OwnAddress1;
+	I2C_InitStruct.I2C_Ack = cfg->Ack;
+	I2C_InitStruct.I2C_AcknowledgedAddress = cfg->AcknowledgedAddress;
+	I2C_Init(cfg->I2Cxx, &I2C_InitStruct);
+	I2C_Cmd(cfg->I2Cxx, ENABLE);
 }
 static void HardI2C_Force_Recovery(I2C_config* cfg)
 {
@@ -409,7 +383,7 @@ static void HardI2C_Force_Recovery(I2C_config* cfg)
 static uint8_t HardI2C_WriteReg(I2C_Device* self,uint8_t SlaveAddr,uint8_t RegAddr,uint8_t Data)
 {
 	I2C_config* cfg = self->config;
-    I2C_TypeDef* I2Cx = cfg->Hardware_I2C->I2Cxx;
+    I2C_TypeDef* I2Cx = cfg->I2Cxx;
 	uint32_t timeout = I2C_TIMEOUT_MAX;
     while(I2C_GetFlagStatus(I2Cx, I2C_FLAG_BUSY)){
         if((timeout--) == 0) { HardI2C_Force_Recovery(cfg); return 1; }
@@ -435,7 +409,7 @@ static uint16_t HardI2C_ReadReg(I2C_Device* self,uint8_t SlaveAddr,uint8_t RegAd
 	uint8_t data;
 	uint32_t timeout = I2C_TIMEOUT_MAX;
     I2C_config* cfg = self->config;
-    I2C_TypeDef* I2Cx = cfg->Hardware_I2C->I2Cxx;
+    I2C_TypeDef* I2Cx = cfg->I2Cxx;
 	
     while(I2C_GetFlagStatus(I2Cx, I2C_FLAG_BUSY)){
         if((timeout--) == 0) { HardI2C_Force_Recovery(cfg); return 0xFFFF; }
@@ -469,7 +443,7 @@ static uint8_t HardI2C_ReadRegs(I2C_Device* self,uint8_t SlaveAddr,uint8_t RegAd
 	uint8_t ReceiveData[],uint16_t Size)
 {
 	I2C_config* cfg = self->config;
-    I2C_TypeDef* I2Cx = cfg->Hardware_I2C->I2Cxx;
+    I2C_TypeDef* I2Cx = cfg->I2Cxx;
 
     if (Size == 0) return 1;
 	uint32_t timeout = I2C_TIMEOUT_MAX;
@@ -509,24 +483,13 @@ static void HardI2C_DMA_Init(I2C_Device* self)
 {
 	Hard_I2C_Init(self);
 	
-	I2C_config* i2c_dma_cfg=self->config;
-	DMA_config* dma_cfg=i2c_dma_cfg->Hardware_I2C->HardI2C_DMA_config;
+	I2C_config* cfg=self->config;
 	
-	dma_cfg->DMA_RxSemaphoreHandle_t=xSemaphoreCreateBinary();
+	cfg->DMA_RxSemaphoreHandle_t=xSemaphoreCreateBinary();
 	
-	if (dma_cfg->Rx_Stream == DMA1_Stream0) {
-        s_pI2C_DMA_Registry[0] = self;  // I2C1_RX
-    } 
-    else if (dma_cfg->Rx_Stream == DMA1_Stream3) {
-        s_pI2C_DMA_Registry[1] = self;  // 预留给 I2C2_RX (假设用 Stream3)
-    }
-    else if (dma_cfg->Rx_Stream == DMA1_Stream2) {
-        s_pI2C_DMA_Registry[2] = self;  // 预留给 I2C3_RX (假设用 Stream2)
-    }
-	
-	RCC_AHB1PeriphClockCmd(dma_cfg->RCC_AHB1Periph_DMAx, ENABLE); 
+	RCC_AHB1PeriphClockCmd(cfg->RCC_AHB1Periph_DMAx, ENABLE); 
 	NVIC_InitTypeDef NVIC_InitStructure;
-    NVIC_InitStructure.NVIC_IRQChannel = dma_cfg->Rx_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannel = cfg->Rx_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 12; 
     NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
     NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
@@ -536,11 +499,10 @@ static uint8_t HardI2C_DMA_ReadRegs(I2C_Device* self,uint8_t SlaveAddr,uint8_t R
 	uint8_t ReceiveData[],uint16_t Size)
 {
 	I2C_config* cfg=self->config;
-	I2C_TypeDef* I2Cx = cfg->Hardware_I2C->I2Cxx;
-	DMA_config* dma_cfg=cfg->Hardware_I2C->HardI2C_DMA_config;
+	I2C_TypeDef* I2Cx = cfg->I2Cxx;
 	
 	DMA_InitTypeDef DMA_InitStructure;
-    DMA_InitStructure.DMA_Channel = dma_cfg->Rx_Channel;
+    DMA_InitStructure.DMA_Channel = cfg->Rx_Channel;
     DMA_InitStructure.DMA_PeripheralBaseAddr = (uint32_t)&I2Cx->DR;
     DMA_InitStructure.DMA_Memory0BaseAddr = (uint32_t)ReceiveData; 
     DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralToMemory;
@@ -555,8 +517,8 @@ static uint8_t HardI2C_DMA_ReadRegs(I2C_Device* self,uint8_t SlaveAddr,uint8_t R
     DMA_InitStructure.DMA_FIFOThreshold = DMA_FIFOThreshold_1QuarterFull;
     DMA_InitStructure.DMA_MemoryBurst = DMA_MemoryBurst_Single;
     DMA_InitStructure.DMA_PeripheralBurst = DMA_PeripheralBurst_Single;
-    DMA_Init(dma_cfg->Rx_Stream, &DMA_InitStructure);
-    DMA_ITConfig(dma_cfg->Rx_Stream, DMA_IT_TC, ENABLE);
+    DMA_Init(cfg->Rx_Stream, &DMA_InitStructure);
+    DMA_ITConfig(cfg->Rx_Stream, DMA_IT_TC, ENABLE);
 	
 	uint32_t timeout = I2C_TIMEOUT_MAX;
     while(I2C_GetFlagStatus(I2Cx, I2C_FLAG_BUSY)){
@@ -576,14 +538,14 @@ static uint8_t HardI2C_DMA_ReadRegs(I2C_Device* self,uint8_t SlaveAddr,uint8_t R
 	
 	I2C_DMALastTransferCmd(I2Cx, ENABLE);
     I2C_DMACmd(I2Cx, ENABLE);
-    DMA_Cmd(dma_cfg->Rx_Stream, ENABLE);
+    DMA_Cmd(cfg->Rx_Stream, ENABLE);
 	(void)I2Cx->SR1;
     (void)I2Cx->SR2;
-	xSemaphoreTake(dma_cfg->DMA_RxSemaphoreHandle_t,portMAX_DELAY);
+	xSemaphoreTake(cfg->DMA_RxSemaphoreHandle_t,portMAX_DELAY);
 	
     I2C_GenerateSTOP(I2Cx, ENABLE);
     I2C_DMACmd(I2Cx, DISABLE);
-    DMA_Cmd(dma_cfg->Rx_Stream, DISABLE);
+    DMA_Cmd(cfg->Rx_Stream, DISABLE);
 	return 0;
 }
 							//=========Interrupt_deal========
@@ -592,47 +554,14 @@ void DMA1_Stream0_IRQHandler(void)
     if (DMA_GetITStatus(DMA1_Stream0, DMA_IT_TCIF0) != RESET)
     {
 		DMA_ClearITPendingBit(DMA1_Stream0, DMA_IT_TCIF0);
-		I2C_Device* pDevice = s_pI2C_DMA_Registry[0];
-		if(pDevice!=NULL)
+		if(MAX_I2C!=NULL)
 		{
-			I2C_config* i2c_cfg=(I2C_config*)pDevice->config;
-			DMA_config* dma_cfg=i2c_cfg->Hardware_I2C->HardI2C_DMA_config;
-			DMA_ITConfig(dma_cfg->Rx_Stream, DMA_IT_TC, DISABLE);
+			I2C_config* i2c_cfg=(I2C_config*)MAX_I2C->config;
+			DMA_ITConfig(i2c_cfg->Rx_Stream, DMA_IT_TC, DISABLE);
 			BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-			xSemaphoreGiveFromISR(dma_cfg->DMA_RxSemaphoreHandle_t,&xHigherPriorityTaskWoken);
+			xSemaphoreGiveFromISR(i2c_cfg->DMA_RxSemaphoreHandle_t,&xHigherPriorityTaskWoken);
 			portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 		}
 		
     }
-}
-void DMA1_Stream2_IRQHandler(void)
-{
-    if (DMA_GetITStatus(DMA1_Stream2, DMA_IT_TCIF2) != RESET)
-    {
-        DMA_ClearITPendingBit(DMA1_Stream2, DMA_IT_TCIF2);
-        I2C_Device* pDevice = s_pI2C_DMA_Registry[2]; 
-        if (pDevice != NULL)
-        {
-            I2C_config* i2c_cfg=(I2C_config*)pDevice->config;
-			DMA_config* dma_cfg=i2c_cfg->Hardware_I2C->HardI2C_DMA_config;
-        }
-    }
-}
-							//======Device_management====
-static I2C_Device* const devices[] = {
-	&stm32F4_SoftI2C1,
-	&stm32F4_SoftI2C2,
-	&stm32F4_HardI2C1,
-	&stm32F4_HardI2C1_DMA,
-};
-I2C_Device* get_i2c_device(const char* name)
-{
-    for (int i = 0; i < sizeof(devices)/sizeof(devices[0]); i++)
-	{
-        if (strcmp(devices[i]->Name, name) == 0)
-		{
-            return devices[i]; 
-        }
-    }
-    return NULL;
 }
