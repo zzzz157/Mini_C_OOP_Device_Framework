@@ -16,7 +16,7 @@
             } \
         } \
     } while(0)
-
+static I2C_Device* g_DMA1_Stream0_Owner = NULL;
 							//函数声明
 //SoftI2C
 static void Soft_I2C_Init(I2C_Device* self);
@@ -520,6 +520,11 @@ static uint8_t HardI2C_DMA_ReadRegs(I2C_Device* self,uint8_t SlaveAddr,uint8_t R
     DMA_Init(cfg->Rx_Stream, &DMA_InitStructure);
     DMA_ITConfig(cfg->Rx_Stream, DMA_IT_TC, ENABLE);
 	
+	if (cfg->Rx_Stream == DMA1_Stream0) 
+	{
+        g_DMA1_Stream0_Owner = self; 
+    }
+	
 	uint32_t timeout = I2C_TIMEOUT_MAX;
     while(I2C_GetFlagStatus(I2Cx, I2C_FLAG_BUSY)){
         if((timeout--) == 0) { HardI2C_Force_Recovery(cfg); return 1; }
@@ -554,12 +559,13 @@ void DMA1_Stream0_IRQHandler(void)
     if (DMA_GetITStatus(DMA1_Stream0, DMA_IT_TCIF0) != RESET)
     {
 		DMA_ClearITPendingBit(DMA1_Stream0, DMA_IT_TCIF0);
-		if(MAX_I2C!=NULL)
+		if(g_DMA1_Stream0_Owner!=NULL)
 		{
-			I2C_config* i2c_cfg=(I2C_config*)MAX_I2C->config;
+			I2C_config* i2c_cfg=(I2C_config*)g_DMA1_Stream0_Owner->config;
 			DMA_ITConfig(i2c_cfg->Rx_Stream, DMA_IT_TC, DISABLE);
 			BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 			xSemaphoreGiveFromISR(i2c_cfg->DMA_RxSemaphoreHandle_t,&xHigherPriorityTaskWoken);
+			g_DMA1_Stream0_Owner = NULL;
 			portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 		}
 		
